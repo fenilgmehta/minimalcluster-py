@@ -28,10 +28,12 @@ def single_worker(envir, fun, job_q, result_q, error_q, history_d, hostname):
             outdict = {n: globals()[fun](n) for n in job_detail}
             result_q.put((job_id, outdict))
         except Queue.Empty:
+            os.kill(os.getpid(), 9)
             return
         except:
             # send the Unexpected error to master node
             error_q.put("Worker Node '{}': ".format(hostname) + "; ".join([repr(e) for e in sys.exc_info()]))
+            os.kill(os.getpid(), 9)
             return
 
 def mp_apply(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_history_d, hostname, nprocs):
