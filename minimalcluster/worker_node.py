@@ -1,7 +1,11 @@
-from multiprocessing.managers import SyncManager
+import datetime
 import multiprocessing
-import sys, os, time, datetime
-from socket import getfqdn
+import os
+import sys
+import time
+from multiprocessing.managers import SyncManager
+import socket
+
 if sys.version_info.major == 3:
     import queue as Queue
 else:
@@ -57,29 +61,31 @@ def mp_apply(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_h
 # this function is put at top level rather than as a method of WorkerNode class
 # this is to bypass the error "AttributeError: type object 'ServerQueueManager' has no attribute 'from_address'""
 def heartbeat(queue_of_worker_list, worker_hostname, nprocs, status):
-    '''
+    """
     heartbeat will keep an eye on whether the master node is checking the list of valid nodes
     if it detects the signal, it will share the information of current node with the master node.
-    '''
+    """
     while True:
         if not queue_of_worker_list.empty():
             queue_of_worker_list.put((worker_hostname, nprocs, os.getpid(), status.value))
         time.sleep(0.01)
 
-class WorkerNode():
 
-    def __init__(self, IP, PORT, AUTHKEY, nprocs, quiet = False):
-        '''
+class WorkerNode:
+
+    def __init__(self, IP, PORT, AUTHKEY, nprocs, quiet=False, limit_nprocs_to_cpu=True):
+        """
         Method to initiate a master node object.
 
         IP: the hostname or IP address of the Master Node
         PORT: the port to use (decided by Master NOde)
         AUTHKEY: The process's authentication key (a string or byte string).
-                  It can't be None for Worker Nodes.
+                 It can't be None for Worker Nodes.
         nprocs: Integer. The number of processors on the Worker Node to be available to the Master Node.
                 It should be less or equal to the number of processors on the Worker Node. If higher than that, the # of available processors will be used instead.
-        '''
+        quiet: bool. Flag to print connection status with the master node.
 
+        """
         assert type(AUTHKEY) in [str, bytes], "AUTHKEY must be either string or byte string."
         assert type(nprocs) == int, "'nprocs' must be an integer."
 
@@ -93,7 +99,7 @@ class WorkerNode():
         elif nprocs < 1:
             print("[WARNING] nprocs specified is not valid. Using the # of cores ({}) instead.".format(N_local_cores))
             self.nprocs = N_local_cores
-        else:            
+        else:
             self.nprocs = nprocs
         self.connected = False
         self.worker_hostname = getfqdn()
@@ -116,7 +122,7 @@ class WorkerNode():
         ServerQueueManager.register('dict_of_job_history')
 
         self.manager = ServerQueueManager(address=(self.IP, self.PORT), authkey=self.AUTHKEY)
-        
+
         try:
             if not self.quiet:
                 print('[{}] Building connection to {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT))
@@ -144,7 +150,7 @@ class WorkerNode():
         if self.connected:
 
             # start the `heartbeat` process so that the master node can always know if this node is still connected.
-            self.heartbeat_process = multiprocessing.Process(target = heartbeat, args = (self.queue_of_worker_list, self.worker_hostname, self.nprocs, self.working_status,))
+            self.heartbeat_process = multiprocessing.Process(target=heartbeat, args=(self.queue_of_worker_list, self.worker_hostname, self.nprocs, self.working_status,))
             self.heartbeat_process.start()
 
             if not self.quiet:
