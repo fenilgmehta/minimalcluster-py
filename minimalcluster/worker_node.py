@@ -175,11 +175,10 @@ class WorkerNode:
         self.manager = ServerQueueManager(address=(self.IP, self.PORT), authkey=self.AUTHKEY)
 
         try:
-            if not self.quiet:
-                print_debug('[{}] Building connection to {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT), level=1)
+            print_debug('[{}] Building connection to {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT), level=2)
             self.manager.connect()
-            if not self.quiet:
-                print_debug('[{}] Client connected to {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT), level=1)
+            print_debug('[{}] Client connected to {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT), level=2)
+
             self.connected = True
             self.job_q = self.manager.get_job_q()
             self.result_q = self.manager.get_result_q()
@@ -189,56 +188,59 @@ class WorkerNode:
             self.queue_of_worker_list = self.manager.queue_of_worker_list()
             self.dict_of_job_history = self.manager.dict_of_job_history()
         except:
+            self.connected = False
             print_debug("[ERROR] No connection could be made. Please check the network or your configuration.", level=1)
 
     def join_cluster(self):
         """
         This method will connect the worker node with the master node, and start to listen to the master node for any job assignment.
         """
-
         self.connect()
 
         if self.connected:
-
             # start the `heartbeat` process so that the master node can always know if this node is still connected.
-            self.heartbeat_process = multiprocessing.Process(target=heartbeat, args=(self.queue_of_worker_list, self.worker_hostname, self.nprocs, self.working_status,))
-            self.heartbeat_process.start()
+            # daemon=True means that this process will be killed when the function returns
+            heartbeat_process = multiprocessing.Process(target=heartbeat,
+                                                        args=(self.queue_of_worker_list, self.worker_hostname, self.nprocs, self.working_status,),
+                                                        daemon=True)
+            heartbeat_process.start()
 
-            if not self.quiet:
-                print_debug('[{}] Listening to Master node {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT), level=1)
+            print_debug('[{}] Listening to Master node {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT), level=2)
 
             while True:
-
                 try:
                     if_job_q_empty = self.job_q.empty()
                 except EOFError:
-                    print("[{}] Lost connection with Master node.".format(str(datetime.datetime.now())))
-                    sys.exit(1)
+                    raise Exception("[{}] Lost connection with Master node.".format(str(datetime.datetime.now())))
+                    # print_debug("[{}] Lost connection with Master node.".format(str(datetime.datetime.now())), level=1)
+                    # sys.exit(1)
 
                 if not if_job_q_empty and self.error_q.empty():
                     print_debug("[{}] Started working on some tasks.".format(str(datetime.datetime.now())), level=1)
 
-                    print("[{}] Started working on some tasks.".format(str(datetime.datetime.now())))
-
-
                     # load environment setup
                     try:
-                        envir = self.envir_to_use.get(timeout = 3)
+                        envir = self.envir_to_use.get(timeout=3)
                         self.envir_to_use.put(envir)
-                    except:
-                        sys.exit("[ERROR] Failed to get the environment statement from Master node.")
+                    except Exception as e:
+                        raise Exception("[ERROR] Failed to get the environment statement from Master node -> {}".format(str(e)))
+                        # sys.exit("[ERROR] Failed to get the environment statement from Master node.")
 
                     # load task function
                     try:
-                        target_func = self.target_func.get(timeout = 3)
+                        target_func = self.target_func.get(timeout=3)
                         self.target_func.put(target_func)
-                    except:
-                        sys.exit("[ERROR] Failed to get the task function from Master node.")
-                    
+                    except Exception as e:
+                        raise Exception("[ERROR] Failed to get the task function from Master node -> {}".format(str(e)))
+                        # sys.exit("[ERROR] Failed to get the task function from Master node.")
+
                     self.working_status.value = 1
                     mp_apply(envir, target_func, self.job_q, self.result_q, self.error_q, self.dict_of_job_history, self.worker_hostname, self.nprocs)
-                    print("[{}] Tasks finished.".format(str(datetime.datetime.now())))
+
                     print_debug("[{}] Tasks finished.".format(str(datetime.datetime.now())), level=1)
                     self.working_status.value = 0
 
-                time.sleep(0.1) # avoid too frequent communication which is unnecessary
+                # TODO: check the impact of increase in sleep time
+                # avoid too frequent communication which is unnecessary
+                # time.sleep(0.1)
+                time.sleep(0.53)
