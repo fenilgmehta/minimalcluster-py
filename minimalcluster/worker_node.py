@@ -13,6 +13,33 @@ else:
 
 __all__ = ['WorkerNode']
 
+# -*- coding: future_fstrings -*-
+# use `pip install future-fstrings`
+
+# Higher the DEBUG_LOG value, higher the debug statements printed
+# DEBUG_LOG = 0, no log messages
+#           = 1, basic messages when task begins, task finishes and other messages related to connection with the master node
+#           = 2, used when reporting bug to the developer
+DEBUG_LOG = multiprocessing.Value('i', 1)
+
+
+def set_debug_level(debug_level_n):
+    global DEBUG_LOG
+    with DEBUG_LOG.get_lock():
+        DEBUG_LOG.value = debug_level_n
+
+
+def get_debug_level():
+    global DEBUG_LOG
+    return DEBUG_LOG.value
+
+
+def print_debug(msg="", end="\n", file=sys.stderr, level=0):
+    global DEBUG_LOG
+    if get_debug_level() >= level:
+        print(msg, end=end, file=file)
+
+
 def single_worker(envir, fun, job_q, result_q, error_q, history_d, hostname):
     """ A worker function to be launched in a separate process. Takes jobs from
         job_q - each job a list of numbers to factorize. When the job is done,
@@ -71,9 +98,23 @@ def heartbeat(queue_of_worker_list, worker_hostname, nprocs, status):
         time.sleep(0.01)
 
 
+def get_network_ip():
+    try:
+        return [
+            l for l in (
+                [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith("127.")][:1],
+                [[(s.connect(('8.8.8.8', 53)), s.getsockname()[0], s.close()) for s in [socket.socket(socket.AF_INET, socket.SOCK_DGRAM)]][0][1]]
+            ) if l
+        ][0][0]
+    except OSError as e:
+        print(f"OSError: {e}")
+        print(f"WARNING: returning loopback IP address: 127.0.0.1")
+        return "127.0.0.1"
+
+
 class WorkerNode:
 
-    def __init__(self, IP, PORT, AUTHKEY, nprocs, quiet=False, limit_nprocs_to_cpu=True):
+    def __init__(self, IP, PORT, AUTHKEY, nprocs, debug_level=2, limit_nprocs_to_cpucores=True):
         """
         Method to initiate a master node object.
 
@@ -83,28 +124,38 @@ class WorkerNode:
                  It can't be None for Worker Nodes.
         nprocs: Integer. The number of processors on the Worker Node to be available to the Master Node.
                 It should be less or equal to the number of processors on the Worker Node. If higher than that, the # of available processors will be used instead.
-        quiet: bool. Flag to print connection status with the master node.
-
+        debug_level: Integer. The level of debug statements to be print to the error stream. Higher the number, more the debug statements.
+                     Levels = [0, 1, 2, 3]
+                     0 -> only important messages
+                     1 -> above messages and task execution related messages
+                     2 -> above messages and connection related messages
+                     3 -> above messages, spawned process and execution job/work related messages
+        limit_nprocs_to_CPU: bool. Flag which decides the maximum number of processes that can be spawn.
+                             If True, then the max sub-processes is <= # of available processors
+                             If False, then any number of sub-processes can be created, there is no limitation.
+                             However, note that for compute intensive tasks, performance can be impacted.
         """
         assert type(AUTHKEY) in [str, bytes], "AUTHKEY must be either string or byte string."
         assert type(nprocs) == int, "'nprocs' must be an integer."
+        assert type(debug_level) == int, "'debug_level' must be an integer."
+        assert type(limit_nprocs_to_cpucores) == bool, "'limit_nprocs_to_cpucores' must be an boolean."
 
         self.IP = IP
         self.PORT = PORT
         self.AUTHKEY = AUTHKEY.encode() if type(AUTHKEY) == str else AUTHKEY
         N_local_cores = multiprocessing.cpu_count()
-        if nprocs > N_local_cores:
-            print("[WARNING] nprocs specified is more than the # of cores of this node. Using the # of cores ({}) instead.".format(N_local_cores))
+        if limit_nprocs_to_cpucores and nprocs > N_local_cores:
+            print_debug("[WARNING] nprocs specified is more than the # of cores of this node. Using the # of cores ({}) instead.".format(N_local_cores), level=0)
             self.nprocs = N_local_cores
         elif nprocs < 1:
-            print("[WARNING] nprocs specified is not valid. Using the # of cores ({}) instead.".format(N_local_cores))
+            print_debug("[WARNING] nprocs specified is not valid. Using the # of cores ({}) instead.".format(N_local_cores), level=0)
             self.nprocs = N_local_cores
         else:
             self.nprocs = nprocs
         self.connected = False
-        self.worker_hostname = getfqdn()
-        self.quiet = quiet
-        self.working_status = multiprocessing.Value("i", 0) # if the node is working on any work loads
+        self.worker_hostname = "{}/{}".format(socket.getfqdn(), get_network_ip())
+        set_debug_level(debug_level_n=debug_level)
+        self.working_status = multiprocessing.Value("i", 0)  # if the node is working on any work loads
 
     def connect(self):
         """
@@ -125,10 +176,10 @@ class WorkerNode:
 
         try:
             if not self.quiet:
-                print('[{}] Building connection to {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT))
+                print_debug('[{}] Building connection to {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT), level=1)
             self.manager.connect()
             if not self.quiet:
-                print('[{}] Client connected to {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT))
+                print_debug('[{}] Client connected to {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT), level=1)
             self.connected = True
             self.job_q = self.manager.get_job_q()
             self.result_q = self.manager.get_result_q()
@@ -138,7 +189,7 @@ class WorkerNode:
             self.queue_of_worker_list = self.manager.queue_of_worker_list()
             self.dict_of_job_history = self.manager.dict_of_job_history()
         except:
-            print("[ERROR] No connection could be made. Please check the network or your configuration.")
+            print_debug("[ERROR] No connection could be made. Please check the network or your configuration.", level=1)
 
     def join_cluster(self):
         """
@@ -154,7 +205,7 @@ class WorkerNode:
             self.heartbeat_process.start()
 
             if not self.quiet:
-                print('[{}] Listening to Master node {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT))
+                print_debug('[{}] Listening to Master node {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT), level=1)
 
             while True:
 
@@ -165,6 +216,7 @@ class WorkerNode:
                     sys.exit(1)
 
                 if not if_job_q_empty and self.error_q.empty():
+                    print_debug("[{}] Started working on some tasks.".format(str(datetime.datetime.now())), level=1)
 
                     print("[{}] Started working on some tasks.".format(str(datetime.datetime.now())))
 
@@ -186,6 +238,7 @@ class WorkerNode:
                     self.working_status.value = 1
                     mp_apply(envir, target_func, self.job_q, self.result_q, self.error_q, self.dict_of_job_history, self.worker_hostname, self.nprocs)
                     print("[{}] Tasks finished.".format(str(datetime.datetime.now())))
+                    print_debug("[{}] Tasks finished.".format(str(datetime.datetime.now())), level=1)
                     self.working_status.value = 0
 
                 time.sleep(0.1) # avoid too frequent communication which is unnecessary
