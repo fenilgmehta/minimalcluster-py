@@ -48,24 +48,39 @@ def single_worker(envir, fun, job_q, result_q, error_q, history_d, hostname):
     """
 
     # Reference:
-    #https://stackoverflow.com/questions/4484872/why-doesnt-exec-work-in-a-function-with-a-subfunction
+    # https://stackoverflow.com/questions/4484872/why-doesnt-exec-work-in-a-function-with-a-subfunction
     exec(envir) in locals()
     globals().update(locals())
     while True:
         try:
             job_id, job_detail = job_q.get_nowait()
+            print_debug(f"DEBUG: [{str(os.getppid()):5} -> {str(os.getpid()):5}] to work on: {job_id}", level=3)
             # history_q.put({job_id: hostname})
             history_d[job_id] = hostname
             outdict = {n: globals()[fun](n) for n in job_detail}
             result_q.put((job_id, outdict))
+            print_debug(f"DEBUG: [{str(os.getppid()):5} -> {str(os.getpid()):5}] work finished: {job_id}", level=3)
+        except EOFError:
+            print_debug(f"\n[ERROR] [{str(os.getppid()):5} -> {str(os.getpid()):5}] Connection closed by the server. STOPPING the spawned processes...", level=1)
+            # exit(0)  # This does not stop the spawned process on remote worker node
+            os.kill(os.getpid(), 9)
+            print_debug(f"DEBUG: using return: STOPPING single_worker(...) {os.getpid()}", level=3)
+            return
         except Queue.Empty:
+            print_debug(f"\nDEBUG: [{str(os.getppid()):5} -> {str(os.getpid()):5}] Queue.Empty: returning from single_worker(...)", level=3)
+            # exit(0)  # This does not stop the spawned process on remote worker node
             os.kill(os.getpid(), 9)
+            print_debug(f"DEBUG: using return: STOPPING single_worker(...) {os.getpid()}", level=3)
             return
-        except:
-            # send the Unexpected error to master node
+        except Exception as e:
+            # Send the Unexpected error to master node. This will not stop the master node, it will continue to execute
             error_q.put("Worker Node '{}': ".format(hostname) + "; ".join([repr(e) for e in sys.exc_info()]))
+            print_debug(f"\nDEBUG: [{str(os.getppid()):5} -> {str(os.getpid()):5}] Unknown error, returning from single_worker(...)\n\t{e}", level=3)
+            # exit(0)  # This does not stop the spawned process on remote worker node
             os.kill(os.getpid(), 9)
+            print_debug(f"DEBUG: using return: STOPPING single_worker(...) {os.getpid()}", level=3)
             return
+
 
 def mp_apply(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_history_d, hostname, nprocs):
     """ Split the work with jobs in shared_job_q and results in
