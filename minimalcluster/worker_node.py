@@ -24,12 +24,29 @@ DEBUG_LOG = multiprocessing.Value('i', 1)
 
 
 def set_debug_level(debug_level_n):
+    """
+    Will update the debugging log level to debug_level_n
+
+    NOTE: debugging log level is global to the library and
+    hence will affect all the object instances created
+
+    :param debug_level_n: int.
+    :return: None
+    """
     global DEBUG_LOG
     with DEBUG_LOG.get_lock():
         DEBUG_LOG.value = debug_level_n
 
 
 def get_debug_level():
+    """
+    Will return the current the debugging log level
+
+    NOTE: debugging log level is global to the library and
+    hence will affect all the object instances created
+
+    :return: int
+    """
     global DEBUG_LOG
     return DEBUG_LOG.value
 
@@ -41,10 +58,12 @@ def print_debug(msg="", end="\n", file=sys.stderr, level=0):
 
 
 def single_worker(envir, fun, job_q, result_q, error_q, history_d, hostname):
-    """ A worker function to be launched in a separate process. Takes jobs from
-        job_q - each job a list of numbers to factorize. When the job is done,
-        the result (dict mapping number -> list of factors) is placed into
-        result_q. Runs until job_q is empty.
+    """
+    A worker function to be launched in a separate process. Takes jobs from
+    job_q - each job a list of numbers to factorize. When the job is done,
+    the result (dict mapping number -> list of factors) is placed into
+    result_q. Runs until job_q is empty.
+    :return: None
     """
 
     # Reference:
@@ -83,12 +102,14 @@ def single_worker(envir, fun, job_q, result_q, error_q, history_d, hostname):
 
 
 def mp_apply(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_history_d, hostname, nprocs):
-    """ Split the work with jobs in shared_job_q and results in
-        shared_result_q into several processes. Launch each process with
-        single_worker as the worker function, and wait until all are
-        finished.
     """
-    
+    Split the work with jobs in shared_job_q and results in
+    shared_result_q into several processes. Launch each process with
+    single_worker as the worker function, and wait until all are
+    finished.
+    :return: None
+    """
+
     procs = []
     for i in range(nprocs):
         p = multiprocessing.Process(
@@ -106,7 +127,9 @@ def heartbeat(queue_of_worker_list, worker_hostname, nprocs, status):
     """
     heartbeat will keep an eye on whether the master node is checking the list of valid nodes
     if it detects the signal, it will share the information of current node with the master node.
+    :return: None
     """
+
     while True:
         if not queue_of_worker_list.empty():
             queue_of_worker_list.put((worker_hostname, nprocs, os.getpid(), status.value))
@@ -114,6 +137,12 @@ def heartbeat(queue_of_worker_list, worker_hostname, nprocs, status):
 
 
 def get_network_ip():
+    """
+    Returns the network IP address of the client machine.
+    If not connected to the network, will return loop-back IP address
+    :return: str
+    """
+
     try:
         return [
             l for l in (
@@ -123,7 +152,7 @@ def get_network_ip():
         ][0][0]
     except OSError as e:
         print(f"OSError: {e}")
-        print(f"WARNING: returning loopback IP address: 127.0.0.1")
+        print(f"WARNING: returning loop-back IP address: 127.0.0.1")
         return "127.0.0.1"
 
 
@@ -150,6 +179,7 @@ class WorkerNode:
                              If False, then any number of sub-processes can be created, there is no limitation.
                              However, note that for compute intensive tasks, performance can be impacted.
         """
+
         assert type(AUTHKEY) in [str, bytes], "AUTHKEY must be either string or byte string."
         assert type(nprocs) == int, "'nprocs' must be an integer."
         assert type(debug_level) == int, "'debug_level' must be an integer."
@@ -176,6 +206,7 @@ class WorkerNode:
         """
         Connect to Master Node after the Worker Node is initialized.
         """
+
         class ServerQueueManager(SyncManager):
             pass
 
@@ -210,6 +241,7 @@ class WorkerNode:
         """
         This method will connect the worker node with the master node, and start to listen to the master node for any job assignment.
         """
+
         self.connect()
 
         if self.connected:
