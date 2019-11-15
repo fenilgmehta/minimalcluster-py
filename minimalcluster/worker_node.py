@@ -131,9 +131,25 @@ def heartbeat(queue_of_worker_list, worker_hostname, nprocs, status):
     """
 
     while True:
-        if not queue_of_worker_list.empty():
-            queue_of_worker_list.put((worker_hostname, nprocs, os.getpid(), status.value))
-        time.sleep(0.01)
+        try:
+            if not queue_of_worker_list.empty():
+                queue_of_worker_list.put((worker_hostname, nprocs, os.getpid(), status.value))
+                time.sleep(1.01)
+            time.sleep(0.01)
+        except EOFError:
+            print_debug(f"[WARNING] Master node shutdown. Shutting down the worker node...", level=1)
+            print_debug(f"DEBUG: STOPPING {os.getpid()}, heartbeat(...)", level=3)
+            # exit(0)  # This does not stop the spawned process on remote worker node
+            os.kill(os.getpid(), 9)
+            print_debug(f"DEBUG: using return: STOPPING heartbeat(...) process {os.getpid()}", level=3)
+            return
+        except (ConnectionResetError, BrokenPipeError) as e:
+            print_debug(f"[ERROR] [{os.getpid()}] [type={type(e)}] Connection closed by the server. Closing the connection checker...", level=1)
+            print_debug(f"DEBUG: STOPPING {os.getpid()}, heartbeat", level=3)
+            # exit(0)  # This does not stop the spawned process on remote worker node
+            os.kill(os.getpid(), 9)
+            print_debug(f"DEBUG: using return: STOPPING heartbeat(...) process {os.getpid()}", level=3)
+            return
 
 
 def get_network_ip():
