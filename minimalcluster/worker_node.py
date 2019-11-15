@@ -11,7 +11,7 @@ if sys.version_info.major == 3:
 else:
     import Queue
 
-__all__ = ['WorkerNode']
+__all__ = ['WorkerNode', 'set_debug_level', 'get_debug_level']
 
 # -*- coding: future_fstrings -*-
 # use `pip install future-fstrings`
