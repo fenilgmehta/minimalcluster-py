@@ -110,16 +110,47 @@ def mp_apply(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_h
     :return: None
     """
 
+    def spawn_new_process():
+        p = multiprocessing.Process(
+            target=single_worker,
+            args=(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_history_d, hostname)
+        )
+        # p.daemon = True  # TODO: check the impact, this causes the sub-processes to exit as soon as the control returns from this function
+        p.start()
+        return p
+
     procs = []
     for i in range(nprocs):
-        p = multiprocessing.Process(
-                target=single_worker,
-                args=(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_history_d, hostname))
-        procs.append(p)
-        p.start()
+        procs.append(spawn_new_process())
 
-    for p in procs:
-        p.join()
+    if get_debug_level() >= 3:
+        while True:
+            print_debug("", level=3)
+            for i in procs:
+                print_debug(f"DEBUG: process [{i.pid}] : is_alive()={i.is_alive()}, exitcode={i.exitcode}", level=3)
+
+            # if all spawned processes have exited, exit the while loop and return
+            if sum([p_i.is_alive() for p_i in procs]) == 0:
+                break
+
+            # if there is work in `shared_job_q` and spawned process has exited, then create a new process
+            if len(procs) <= int(1.5 * nprocs) and not (shared_job_q.empty()) and sum([p_i.is_alive() for p_i in procs]) < nprocs:
+                procs.append(spawn_new_process())
+
+            time.sleep(3.0)
+    else:
+        i_iter = 0
+        while i_iter < len(procs):
+            procs[i_iter].join()
+
+            # if there is work in `shared_job_q` and spawned process has exited, then create a new process
+            if len(procs) <= int(1.5 * nprocs) and not (shared_job_q.empty()) and sum([p_i.is_alive() for p_i in procs]) < nprocs:
+                procs.append(spawn_new_process())
+
+            i_iter += 1
+
+    print_debug(f"\n\n################################################################## DEBUG: mp_apply returned :)\n\n", level=3)
+
 
 # this function is put at top level rather than as a method of WorkerNode class
 # this is to bypass the error "AttributeError: type object 'ServerQueueManager' has no attribute 'from_address'""
