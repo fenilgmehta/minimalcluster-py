@@ -10,6 +10,7 @@ from multiprocessing import Process, cpu_count
 from multiprocessing.managers import SyncManager, DictProxy
 from socket import getfqdn
 from types import FunctionType
+import collections
 
 if sys.version_info.major == 3:
     from queue import Queue as _Queue
@@ -221,7 +222,7 @@ class MasterNode:
             print("[ERROR] The environment statements given can't be executed -> {}".format(str(e)))
             raise
 
-        if self.target_fun in locals() and isinstance(locals()[self.target_fun], FunctionType):
+        if self.target_fun in locals() and isinstance(locals()[self.target_fun], collections.Callable):
             return True
         else:
             return False
