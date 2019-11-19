@@ -75,11 +75,12 @@ class MasterNode:
         # to [1] ensure compatibility between Py 2 and 3; [2] to allow both string and byte string for AUTHKEY input.
         assert type(AUTHKEY) in [str, bytes] or AUTHKEY is None, \
             "AUTKEY must be either one among string, byte string, and None (a random AUTHKEY will be generated if None is given)."
+        if AUTHKEY is not None and type(AUTHKEY) == str:
             AUTHKEY = AUTHKEY.encode()
 
         self.HOST = HOST
         self.PORT = PORT
-        self.AUTHKEY = AUTHKEY if AUTHKEY != None else ''.join(random.choice(string.ascii_uppercase) for _ in range(6)).encode()
+        self.AUTHKEY = AUTHKEY if AUTHKEY is not None else ''.join(random.choice(string.ascii_uppercase) for _ in range(6)).encode()
         self.chunksize = chunksize
         self.server_status = 'off'
         self.as_worker = False
@@ -87,6 +88,9 @@ class MasterNode:
         self.master_fqdn = getfqdn()
         self.pid_as_worker_on_master = None
 
+        self.process_as_worker = None
+        self.args_to_share_to_workers = None
+        self.envir_statements = None
 
     def join_as_worker(self):
         """
@@ -213,8 +217,8 @@ class MasterNode:
     def __check_target_function(self):
         try:
             exec(self.envir_statements)
-        except:
-            print("[ERROR] The environment statements given can't be executed.")
+        except Exception as e:
+            print("[ERROR] The environment statements given can't be executed -> {}".format(str(e)))
             raise
 
         if self.target_fun in locals() and isinstance(locals()[self.target_fun], FunctionType):
@@ -232,8 +236,8 @@ class MasterNode:
             print("[ERROR] The target function registered (`{}`) can't be built with the given environment statements.".format(self.target_fun))
         elif len(self.args_to_share_to_workers) != len(set(self.args_to_share_to_workers)):
             print("[ERROR]The arguments to share with worker nodes are not unique. Please check the data you passed to MasterNode.load_args().")
-        elif len(self.list_workers()) == 0:
-            print("[ERROR] No worker node is available. Can't proceed to execute")
+        # elif len(self.list_workers()) == 0:
+        #     print("[ERROR] No worker node is available. Can't proceed to execute")
         else:
             print("[{}] Assigning jobs to worker nodes.".format(str(datetime.datetime.now())))
 
@@ -241,45 +245,48 @@ class MasterNode:
 
             self.share_target_fun.put(self.target_fun)
 
+            job_id_done_local_set = set()  # NEW 11/19
+
             # The numbers are split into chunks. Each chunk is pushed into the job queue
             for i in range(0, len(self.args_to_share_to_workers), self.chunksize):
                 self.shared_job_q.put((i, self.args_to_share_to_workers[i:(i + self.chunksize)]))
 
             # Wait until all results are ready in shared_result_q
-            numresults = 0
-            resultdict = {}
+            num_results = 0
+            result_dict = {}
             list_job_id_done = []
-            while numresults < len(self.args_to_share_to_workers):
-
-                if len(self.list_workers()) == 0:
-                    print("[{}][Warning] No valid worker node at this moment. You can wait for workers to join, or CTRL+C to cancle.".format(str(datetime.datetime.now())))
+            while num_results < len(self.args_to_share_to_workers):
+                current_workers_list = self.list_workers()
+                if len(current_workers_list) == 0:
+                    print("[{}][Warning] No valid worker node at this moment. You can wait for workers to join, or CTRL+C to cancel.".format(str(datetime.datetime.now())))
+                    time.sleep(1)
                     continue
-
-                if self.shared_job_q.empty() and sum([w[3] for w in self.list_workers()]) == 0:
+                if self.shared_job_q.empty() and sum([w[3] for w in current_workers_list]) == 0:
                     '''
                     After all jobs are assigned and all worker nodes have finished their works,
-                    check if the nodes who have un-finished jobs are sitll alive.
-                    if not, re-collect these jobs and put them inot the job queue
+                    check if the nodes who have un-finished jobs are sill alive.
+                    if not, re-collect these jobs and put them in to the job queue
                     '''
                     while not self.shared_result_q.empty():
                         try:
                             job_id_done, outdict = self.shared_result_q.get(False)
-                            resultdict.update(outdict)
-                            list_job_id_done.append(job_id_done)
-                            numresults += len(outdict)
+                            if job_id_done not in job_id_done_local_set:
+                                result_dict.update(outdict)
+                                list_job_id_done.append(job_id_done)
+                                num_results += len(outdict)
                         except:
                             pass
 
                     [self.dict_of_job_history.pop(k, None) for k in list_job_id_done]
 
-                    for job_id in [x for x,y in self.dict_of_job_history.items()]:
+                    for job_id in self.dict_of_job_history.keys():
                         print("Putting {} back to the job queue".format(job_id))
                         self.shared_job_q.put((job_id, self.args_to_share_to_workers[job_id:(job_id + self.chunksize)]))
 
                 if not self.shared_error_q.empty():
-                    print("[ERROR] Running error occured in remote worker node:")
+                    print("[ERROR] Running error occurred in remote worker node:")
                     print(self.shared_error_q.get())
-                    
+
                     clear_queue(self.shared_job_q)
                     clear_queue(self.shared_result_q)
                     clear_queue(self.share_envir)
@@ -293,13 +300,16 @@ class MasterNode:
                 while not self.shared_result_q.empty():
                     try:
                         job_id_done, outdict = self.shared_result_q.get(False)
-                        resultdict.update(outdict)
-                        list_job_id_done.append(job_id_done)
-                        numresults += len(outdict)
+                        if job_id_done not in job_id_done_local_set:  # NEW 11/19
+                            result_dict.update(outdict)
+                            list_job_id_done.append(job_id_done)
+                            num_results += len(outdict)
                     except:
                         pass
 
+                time.sleep(0.92)
 
+            print(f"DEBUG: master lib = {len(result_dict)}, {num_results}, {len(self.args_to_share_to_workers)}")
             print("[{}] Aggregating on Master node...".format(str(datetime.datetime.now())))
 
             # After the execution is done, empty all the args & task function queues
@@ -310,8 +320,7 @@ class MasterNode:
             clear_queue(self.share_target_fun)
             self.dict_of_job_history.clear()
 
-            return resultdict
-
+            return result_dict
 
     def shutdown(self):
         if self.as_worker:
