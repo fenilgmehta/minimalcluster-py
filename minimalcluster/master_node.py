@@ -288,14 +288,16 @@ class MasterNode:
                     print("[ERROR] Running error occurred in remote worker node:")
                     print(self.shared_error_q.get())
 
-                    clear_queue(self.shared_job_q)
-                    clear_queue(self.shared_result_q)
-                    clear_queue(self.share_envir)
-                    clear_queue(self.share_target_fun)
-                    clear_queue(self.shared_error_q)
-                    self.dict_of_job_history.clear()
+                    # NOTE: the following lines are commented as execution error in one
+                    # remote worker node shall not affect execution of the whole cluster.
 
-                    return None
+                    # clear_queue(self.shared_job_q)
+                    # clear_queue(self.shared_result_q)
+                    # clear_queue(self.share_envir)
+                    # clear_queue(self.share_target_fun)
+                    # clear_queue(self.shared_error_q)
+                    # self.dict_of_job_history.clear()
+                    # return None
 
                 # job_id_done is the unique id of the jobs that have been done and returned to the master node.
                 while not self.shared_result_q.empty():
