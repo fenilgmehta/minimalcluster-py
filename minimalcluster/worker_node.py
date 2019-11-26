@@ -18,9 +18,10 @@ __all__ = ['WorkerNode', 'set_debug_level', 'get_debug_level']
 
 # Higher the DEBUG_LOG value, higher the debug statements printed
 # DEBUG_LOG = 0, no log messages
-#           = 1, basic messages when task begins, task finishes and other messages related to connection with the master node
-#           = 2, used when reporting bug to the developer
-DEBUG_LOG = multiprocessing.Value('i', 1)
+#           = 1, basic messages when task begins, task finishes and other
+#           = 2, messages related to connection with the master node
+#           = 3, used when reporting bug to the developer
+DEBUG_LOG = multiprocessing.Value('i', 2)
 
 
 def set_debug_level(debug_level_n):
@@ -81,23 +82,27 @@ def single_worker(envir, fun, job_q, result_q, error_q, history_d, hostname):
             print_debug(f"DEBUG: [{str(os.getppid()):5} -> {str(os.getpid()):5}] work finished: {job_id}", level=3)
         except EOFError:
             print_debug(f"\n[ERROR] [{str(os.getppid()):5} -> {str(os.getpid()):5}] Connection closed by the server. STOPPING the spawned processes...", level=1)
+            # Reference: https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python
             # exit(0)  # This does not stop the spawned process on remote worker node
-            os.kill(os.getpid(), 9)
+            sys.exit()
             print_debug(f"DEBUG: using return: STOPPING single_worker(...) {os.getpid()}", level=3)
+            os.kill(os.getpid(), 9)
             return
         except Queue.Empty:
             print_debug(f"\nDEBUG: [{str(os.getppid()):5} -> {str(os.getpid()):5}] Queue.Empty: returning from single_worker(...)", level=3)
             # exit(0)  # This does not stop the spawned process on remote worker node
-            os.kill(os.getpid(), 9)
+            sys.exit()
             print_debug(f"DEBUG: using return: STOPPING single_worker(...) {os.getpid()}", level=3)
+            os.kill(os.getpid(), 9)
             return
         except Exception as e:
             # Send the Unexpected error to master node. This will not stop the master node, it will continue to execute
             error_q.put("Worker Node '{}': ".format(hostname) + "; ".join([repr(e) for e in sys.exc_info()]))
             print_debug(f"\nDEBUG: [{str(os.getppid()):5} -> {str(os.getpid()):5}] Unknown error, returning from single_worker(...)\n\t{e}", level=3)
             # exit(0)  # This does not stop the spawned process on remote worker node
-            os.kill(os.getpid(), 9)
+            sys.exit()
             print_debug(f"DEBUG: using return: STOPPING single_worker(...) {os.getpid()}", level=3)
+            os.kill(os.getpid(), 9)
             return
 
 
@@ -171,15 +176,17 @@ def heartbeat(queue_of_worker_list, worker_hostname, nprocs, status):
             print_debug(f"[WARNING] Master node shutdown. Shutting down the worker node...", level=1)
             print_debug(f"DEBUG: STOPPING {os.getpid()}, heartbeat(...)", level=3)
             # exit(0)  # This does not stop the spawned process on remote worker node
-            os.kill(os.getpid(), 9)
+            sys.exit()
             print_debug(f"DEBUG: using return: STOPPING heartbeat(...) process {os.getpid()}", level=3)
+            os.kill(os.getpid(), 9)
             return
         except (ConnectionResetError, BrokenPipeError) as e:
             print_debug(f"[ERROR] [{os.getpid()}] [type={type(e)}] Connection closed by the server. Closing the connection checker...", level=1)
             print_debug(f"DEBUG: STOPPING {os.getpid()}, heartbeat", level=3)
             # exit(0)  # This does not stop the spawned process on remote worker node
-            os.kill(os.getpid(), 9)
+            sys.exit()
             print_debug(f"DEBUG: using return: STOPPING heartbeat(...) process {os.getpid()}", level=3)
+            os.kill(os.getpid(), 9)
             return
 
 
