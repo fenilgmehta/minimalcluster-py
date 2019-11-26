@@ -222,6 +222,8 @@ class MasterNode:
             print("[ERROR] The environment statements given can't be executed -> {}".format(str(e)))
             raise
 
+        # Reference: https://stackoverflow.com/questions/624926/how-do-i-detect-whether-a-python-variable-is-a-function
+        # See answer by 'nh2'
         if self.target_fun in locals() and isinstance(locals()[self.target_fun], collections.Callable):
             return True
         else:
@@ -275,6 +277,7 @@ class MasterNode:
                                 result_dict.update(outdict)
                                 list_job_id_done.append(job_id_done)
                                 num_results += len(outdict)
+                                job_id_done_local_set.add(job_id_done)
                         except:
                             pass
 
@@ -307,6 +310,7 @@ class MasterNode:
                             result_dict.update(outdict)
                             list_job_id_done.append(job_id_done)
                             num_results += len(outdict)
+                            job_id_done_local_set.add(job_id_done)
                     except:
                         pass
 
