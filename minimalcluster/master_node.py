@@ -19,6 +19,14 @@ else:
 
 __all__ = ['MasterNode']
 
+DEBUG_LOG = None
+
+
+def print_debug(msg="", end="\n", file=sys.stderr, level=0):
+    global DEBUG_LOG
+    if DEBUG_LOG >= level:
+        print(f"SERVER DEBUG: {msg}", end=end, file=file)
+
 
 # Make Queue.Queue pickleable
 # Ref: https://stackoverflow.com/questions/25631266/cant-pickle-class-main-jobqueuemanager
