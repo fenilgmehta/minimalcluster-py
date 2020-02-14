@@ -345,7 +345,9 @@ class MasterNode:
                     continue
                 sum_workers_status = sum([w[3] for w in current_workers_list])
                 print_debug(level=3)
-                print_debug(f"time since last change = {int(time.time() - local_last_status_change)} / {approx_max_job_time}", level=3)
+                print_debug(f"time since last change = "
+                            f"{'∞' if local_last_status_change==float('inf') else int(time.time() - local_last_status_change)}"
+                            f" / {approx_max_job_time}", level=3)
                 print_debug(f"val self.shared_job_q.empty() = {self.shared_job_q.empty()}", level=3)
                 print_debug(f"val sum_workers_status = {sum_workers_status:4} / {len(current_workers_list):4}", level=3)
                 print_debug(f"val results computed   = {num_results} / {len(self.args_to_share_to_workers)}", level=3)
