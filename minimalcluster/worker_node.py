@@ -103,7 +103,9 @@ def single_worker(envir, fun, job_q, result_q, error_q, history_d, hostname):
     return
 
 
-def mp_apply(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_history_d, hostname, nprocs):
+def mp_apply(envir, fun,
+             shared_job_q, shared_result_q, shared_error_q, shared_history_d, hostname, nprocs,
+             heartbeat_process, approx_max_job_time):
     """
     Split the work with jobs in shared_job_q and results in
     shared_result_q into several processes. Launch each process with
@@ -115,9 +117,9 @@ def mp_apply(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_h
     def spawn_new_process():
         p = multiprocessing.Process(
             target=single_worker,
-            args=(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_history_d, hostname)
+            args=(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_history_d, hostname),
+            daemon=False  # this causes the sub-processes to exit as soon as the parent process exits/killed
         )
-        # p.daemon = True  # TODO: check the impact, this causes the sub-processes to exit as soon as the control returns from this function
         p.start()
         return p
 
@@ -125,33 +127,65 @@ def mp_apply(envir, fun, shared_job_q, shared_result_q, shared_error_q, shared_h
     for i in range(nprocs):
         procs.append(spawn_new_process())
 
-    if get_debug_level() >= 3:
-        while True:
-            print_debug("", level=3)
+    last_process_count_change = float(2 ** 128)
+    last_active_processes = 0
+    bool_changed = False
+    i_iter = 0
+    # while i_iter < len(procs):
+    #     procs[i_iter].join()
+    while True:
+        if get_debug_level() >= 3:
+            print_debug(f"DEBUG: shared_job_q.empty() = {shared_job_q.empty()}", level=3)
             for i in procs:
                 print_debug(f"DEBUG: process [{i.pid}] : is_alive()={i.is_alive()}, exitcode={i.exitcode}", level=3)
 
-            # if all spawned processes have exited, exit the while loop and return
-            if sum([p_i.is_alive() for p_i in procs]) == 0:
-                break
+        if not heartbeat_process.is_alive():
+            for i in procs:
+                i.kill()
+            return False
 
-            # if there is work in `shared_job_q` and spawned process has exited, then create a new process
-            if len(procs) <= int(1.5 * nprocs) and not (shared_job_q.empty()) and sum([p_i.is_alive() for p_i in procs]) < nprocs:
-                procs.append(spawn_new_process())
+        active_processes = sum([p_i.is_alive() for p_i in procs])
 
-            time.sleep(3.0)
-    else:
-        i_iter = 0
-        while i_iter < len(procs):
-            procs[i_iter].join()
+        # if all spawned processes have exited, exit the while loop and return
+        if active_processes == 0:
+            break
 
-            # if there is work in `shared_job_q` and spawned process has exited, then create a new process
-            if len(procs) <= int(1.5 * nprocs) and not (shared_job_q.empty()) and sum([p_i.is_alive() for p_i in procs]) < nprocs:
-                procs.append(spawn_new_process())
+        # ADDED - 20191206 - start
+        if (not bool_changed) and len(procs) > nprocs and active_processes != nprocs:
+            bool_changed = True
+            last_process_count_change = time.time()
+            last_active_processes = active_processes
+        print_debug(f"val bool_changed = {bool_changed}", level=3)
+        print_debug(f"Time since last process count change = {(time.time() - last_process_count_change):5.2f}", level=3)
+        if bool_changed:
+            if last_active_processes != active_processes:
+                last_process_count_change = time.time()
+                last_active_processes = active_processes
+            elif (time.time() - last_process_count_change) > approx_max_job_time:
+                print_debug(
+                    f"\nval last_active_processes = {last_active_processes}"
+                    f"\nval active_processes = {active_processes}"
+                    f"\nTime since last process count change = {(time.time() - last_process_count_change):5.2f}"
+                    "\n\n*************************************************************************"
+                    "\nDEBUG: CRITICAL WARNING processes seem to do no work. Hence stopping them",
+                    "\n*************************************************************************", level=2
+                )
+                # heartbeat_process.kill()
+                for i in procs: i.kill()
+                time.sleep(0.5)
+                return False
+        # ADDED - 20191206 - end ^
 
-            i_iter += 1
+        # WARNING - it may creates problem
+        # if there is work in `shared_job_q` and spawned process has exited, then create a new process
+        if active_processes < nprocs and len(procs) <= int(1.5 * nprocs) and (not shared_job_q.empty()):
+            procs.append(spawn_new_process())
+
+        time.sleep(2.88)
+        i_iter += 1
 
     print_debug(f"\n\n################################################################## DEBUG: mp_apply returned :)\n\n", level=3)
+    return True
 
 
 # this function is put at top level rather than as a method of WorkerNode class
@@ -285,10 +319,15 @@ class WorkerNode:
             self.connected = False
             print_debug("[ERROR] No connection could be made. Please check the network or your configuration.", level=1)
 
-    def join_cluster(self):
+    def join_cluster(self, approx_max_job_time):
         """
         This method will connect the worker node with the master node, and start to listen to the master node for any job assignment.
         """
+
+        if approx_max_job_time is None or (isinstance(approx_max_job_time, (int, float,)) and approx_max_job_time <= 0):
+            approx_max_job_time = 2 ** 30
+        elif not (approx_max_job_time is None) and not (isinstance(approx_max_job_time, (int, float,))):
+            approx_max_job_time = 2 ** 30
 
         self.connect()
 
@@ -297,7 +336,7 @@ class WorkerNode:
             # daemon=True means that this process will be killed when the function returns
             heartbeat_process = multiprocessing.Process(target=heartbeat,
                                                         args=(self.queue_of_worker_list, self.worker_hostname, self.nprocs, self.working_status,),
-                                                        daemon=True)
+                                                        daemon=False)
             heartbeat_process.start()
 
             print_debug('[{}] Listening to Master node {}:{}'.format(str(datetime.datetime.now()), self.IP, self.PORT), level=2)
@@ -330,10 +369,14 @@ class WorkerNode:
                         # sys.exit("[ERROR] Failed to get the task function from Master node.")
 
                     self.working_status.value = 1
-                    mp_apply(envir, target_func, self.job_q, self.result_q, self.error_q, self.dict_of_job_history, self.worker_hostname, self.nprocs)
-
+                    mp_apply_success = mp_apply(envir, target_func,
+                                                self.job_q, self.result_q, self.error_q, self.dict_of_job_history, self.worker_hostname, self.nprocs,
+                                                heartbeat_process, approx_max_job_time)
                     print_debug("[{}] Tasks finished.".format(str(datetime.datetime.now())), level=1)
                     self.working_status.value = 0
+                    if not mp_apply_success:
+                        print_debug("heartbeat_process stopped. Hence returning", level=1)
+                        return
 
                 # TODO: check the impact of increase in sleep time
                 # avoid too frequent communication which is unnecessary
