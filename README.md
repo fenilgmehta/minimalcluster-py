@@ -41,7 +41,8 @@ pip install minimalcluster
 
 Alternative: manually build and install:
 ```shell script
-# Go to the directory where this repository has been cloned and run the following commands.
+# Open the terminal and enter the following commands
+git clone https://github.com/fenilgmehta/minimalcluster-py/ --branch bug-fix_and_update  # OR manually download the zip from above
 cd minimalcluster-py
 python3 setup.py sdist bdist_wheel
 python3 -m pip install --upgrade dist/minimalcluster*whl
