@@ -283,16 +283,32 @@ class MasterNode:
         else:
             return False
 
-    def execute(self):
+    def execute(self, approx_max_job_time=None):
+        """
+        Start the job execution on the cluster
+
+        Args:
+            approx_max_job_time (int, float): Approximately how much time(in seconds) would one task/job take for execution
+
+        Returns:
+            None
+        """
+        if (approx_max_job_time is None) or \
+                (isinstance(approx_max_job_time, (int, float,)) and approx_max_job_time <= 0) or \
+                (not (approx_max_job_time is None) and not (isinstance(approx_max_job_time, (int, float,)))):
+            approx_max_job_time = 2 ** 128
+
         # Ensure the error queue is empty
         clear_queue(self.shared_error_q)
 
         if self.target_fun is None:
             print("[ERROR] Target function is not registered yet.")
         elif not self.__check_target_function():
-            print("[ERROR] The target function registered (`{}`) can't be built with the given environment statements.".format(self.target_fun))
+            print("[ERROR] The target function registered (`{}`) can't be built "
+                  "with the given environment statements.".format(self.target_fun))
         elif len(self.args_to_share_to_workers) != len(set(self.args_to_share_to_workers)):
-            print("[ERROR]The arguments to share with worker nodes are not unique. Please check the data you passed to MasterNode.load_args().")
+            print("[ERROR]The arguments to share with worker nodes are not unique. "
+                  "Please check the data you passed to MasterNode.load_args().")
         # elif len(self.list_workers()) == 0:
         #     print("[ERROR] No worker node is available. Can't proceed to execute")
         else:
@@ -302,48 +318,94 @@ class MasterNode:
 
             self.share_target_fun.put(self.target_fun)
 
-            job_id_done_local_set = set()  # NEW 11/19
-
             # The numbers are split into chunks. Each chunk is pushed into the job queue
-            for i in range(0, len(self.args_to_share_to_workers), self.chunksize):
-                self.shared_job_q.put((i, self.args_to_share_to_workers[i:(i + self.chunksize)]))
+            local_total_job_count = 0
+            # Set containing job_id of all jobs completed
+            local_set_job_id_done = set()
+            # Time at which last job was completed
+            local_last_status_change = float('inf')
+
+            for i in range(0, len(self.args_to_share_to_workers), self.chunk_size):
+                self.shared_job_q.put((i, self.args_to_share_to_workers[i:(i + self.chunk_size)]))
+                local_total_job_count += 1
+                print_debug(f"LEN [{local_total_job_count}] = "
+                            f"{len(self.args_to_share_to_workers[i:(i + self.chunk_size)])}", level=5)
+            print_debug(f"TOTAL len = {local_total_job_count}", level=3)
 
             # Wait until all results are ready in shared_result_q
             num_results = 0
-            result_dict = {}
+            dict_result = {}
             list_job_id_done = []
             while num_results < len(self.args_to_share_to_workers):
                 current_workers_list = self.list_workers()
                 if len(current_workers_list) == 0:
-                    print("[{}][Warning] No valid worker node at this moment. You can wait for workers to join, or CTRL+C to cancel.".format(str(datetime.datetime.now())))
+                    print("[{}][Warning] No valid worker node at this moment. You can wait for "
+                          "workers to join, or CTRL+C to cancel.".format(str(datetime.datetime.now())))
                     time.sleep(1)
                     continue
-                if self.shared_job_q.empty() and sum([w[3] for w in current_workers_list]) == 0:
+                sum_workers_status = sum([w[3] for w in current_workers_list])
+                print_debug(level=3)
+                print_debug(f"time since last change = {int(time.time() - local_last_status_change)} / {approx_max_job_time}", level=3)
+                print_debug(f"val self.shared_job_q.empty() = {self.shared_job_q.empty()}", level=3)
+                print_debug(f"val sum_workers_status = {sum_workers_status:4} / {len(current_workers_list):4}", level=3)
+                print_debug(f"val results computed   = {num_results} / {len(self.args_to_share_to_workers)}", level=3)
+                print_debug(f"val jobs completed     = {len(local_set_job_id_done)} / {local_total_job_count}", level=3)
+                if self.shared_job_q.empty() and \
+                        (sum_workers_status == 0 or ((time.time() - local_last_status_change) > approx_max_job_time)):
                     '''
                     After all jobs are assigned and all worker nodes have finished their works,
                     check if the nodes who have un-finished jobs are sill alive.
                     if not, re-collect these jobs and put them in to the job queue
                     '''
+                    if (time.time() - local_last_status_change) > approx_max_job_time:
+                        local_last_status_change = time.time()
+                    print_debug(f"val self.shared_result_q.empty() = {self.shared_result_q.empty()}", level=3)
+                    print_debug(f"val len(list_job_id_done) = {len(list_job_id_done):}", level=3)
                     while not self.shared_result_q.empty():
+                        local_last_status_change = time.time()
                         try:
                             job_id_done, outdict = self.shared_result_q.get(False)
-                            if job_id_done not in job_id_done_local_set:
-                                result_dict.update(outdict)
+                            if job_id_done not in local_set_job_id_done:
+                                print_debug(
+                                    f"******** job_id, len(outdict) = {job_id_done:6}, {len(outdict):6}, "
+                                    f"{len(outdict) == len(self.args_to_share_to_workers[job_id_done: job_id_done + self.chunk_size])}",
+                                    level=3
+                                )
+                                dict_result.update(outdict)
                                 list_job_id_done.append(job_id_done)
                                 num_results += len(outdict)
-                                job_id_done_local_set.add(job_id_done)
+                                local_set_job_id_done.add(job_id_done)
                         except:
                             pass
 
                     [self.dict_of_job_history.pop(k, None) for k in list_job_id_done]
+                    list_job_id_done = []
 
+                    approx_max_job_time += 5  # NEW: 20191206
                     for job_id in self.dict_of_job_history.keys():
                         print("Putting {} back to the job queue".format(job_id))
-                        self.shared_job_q.put((job_id, self.args_to_share_to_workers[job_id:(job_id + self.chunksize)]))
+                        self.shared_job_q.put((job_id, self.args_to_share_to_workers[job_id:(job_id + self.chunk_size)]))
 
                 if not self.shared_error_q.empty():
                     print("[ERROR] Running error occurred in remote worker node:")
-                    print(self.shared_error_q.get())
+                    while not self.shared_error_q.empty():
+                        error_message = self.shared_error_q.get()
+                        if not error_message.startswith(prefix="#Error#"):
+                            print(error_message)
+                            continue
+                        try:
+                            error_host_name, error_job_id, error_job_len = error_message[7:].split("#")
+                            error_job_id, error_job_len = int(error_job_len), int(error_job_len)
+                        except Exception as e:
+                            error_host_name, error_job_id, error_job_len = "Unknown", -1, self.chunk_size
+                            print_debug(str(e), level=2)
+                        list_job_id_done.append(error_job_id)
+                        num_results += error_job_len
+                        local_set_job_id_done.add(error_job_id)
+                        self.dict_of_job_history.pop(error_job_id, None)
+                        print("[Error] hostname={}, job_id={}, job_len={}".format(
+                            error_host_name, error_job_id, error_job_len
+                        ))
 
                     # NOTE: the following lines are commented as execution error in one
                     # remote worker node shall not affect execution of the whole cluster.
@@ -358,19 +420,25 @@ class MasterNode:
 
                 # job_id_done is the unique id of the jobs that have been done and returned to the master node.
                 while not self.shared_result_q.empty():
+                    local_last_status_change = time.time()
                     try:
                         job_id_done, outdict = self.shared_result_q.get(False)
-                        if job_id_done not in job_id_done_local_set:  # NEW 11/19
-                            result_dict.update(outdict)
+                        if job_id_done not in local_set_job_id_done:  # NEW 11/19
+                            print_debug(
+                                f"******** job_id, len(outdict) = {job_id_done}, {len(outdict)}, "
+                                f"{len(outdict) == len(self.args_to_share_to_workers[job_id_done: job_id_done + self.chunk_size])}",
+                                level=3
+                            )
+                            dict_result.update(outdict)
                             list_job_id_done.append(job_id_done)
                             num_results += len(outdict)
-                            job_id_done_local_set.add(job_id_done)
+                            local_set_job_id_done.add(job_id_done)
                     except:
                         pass
 
                 time.sleep(0.92)
 
-            print(f"DEBUG: master lib = {len(result_dict)}, {num_results}, {len(self.args_to_share_to_workers)}")
+            print_debug(f"DEBUG: master lib = {len(dict_result)}, {num_results}, {len(self.args_to_share_to_workers)}", level=3)
             print("[{}] Aggregating on Master node...".format(str(datetime.datetime.now())))
 
             # After the execution is done, empty all the args & task function queues
@@ -381,7 +449,7 @@ class MasterNode:
             clear_queue(self.share_target_fun)
             self.dict_of_job_history.clear()
 
-            return result_dict
+            return dict_result
 
     def shutdown(self):
         if self.as_worker:
