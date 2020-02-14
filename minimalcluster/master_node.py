@@ -197,26 +197,44 @@ class MasterNode:
             self.as_worker = False
             print("[INFO] The master node has stopped working as a worker node.")
 
-    def list_workers(self):
+    def list_workers(self, approx_max_workers=1000):
         """
         Return a list of connected worker nodes.
-        Each element of this list is:
-            (hostname of worker node,
-             # of available cores,
-             pid of heartbeat process on the worker node,
-             if the worker node is working on any work load currently (1:Yes, 0:No))
+
+        Each element of this list is a tuple:
+            (
+                hostname of worker node,
+                # of available cores,
+                pid of heartbeat process on the worker node,
+                if the worker node is working on any work load currently (1:Yes, 0:No)
+            )
+
+        Args:
+            approx_max_workers (int): approximately what are the maximum number of workers connected to the master not ?
+
+        Returns:
+            list: connected worker nodes
         """
+
         # STEP-1: an element will be PUT into the queue "self.queue_of_worker_list"
         # STEP-2: worker nodes will watch on this queue and attach their information into this queue too
         # STEP-3: this function will collect the elements from the queue and return the list of workers node who responded
-
+        print_debug("entered list_workers(...)", level=4)
         self.queue_of_worker_list.put(".")  # trigger worker nodes to contact master node to show their "heartbeat"
         time.sleep(0.3)  # Allow some time for collecting "heartbeat"
 
         worker_list = []
         while not self.queue_of_worker_list.empty():
             worker_list.append(self.queue_of_worker_list.get())
+            if len(worker_list) > approx_max_workers:
+                print(f"*** SERVER DEBUG ***, list_workers(...) overflow" +
+                      f"\n\t{type(self.queue_of_worker_list)}" +
+                      f"\n\t{len(worker_list)} / {approx_max_workers}")
+                while not self.queue_of_worker_list.empty():
+                    self.queue_of_worker_list.get()
+                break
 
+        print_debug("returning from list_workers(...)", level=4)
         return list(set([w for w in worker_list if w != "."]))
 
     def load_envir(self, source, from_file=True):
