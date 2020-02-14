@@ -95,6 +95,17 @@ We need to specify the task function (as well as its potential dependencies) and
 
 **Arguments**: The argument must be a list. It will be passed to the task function. Usage: *master.load_args(args)*. **Note the elements in list args must be unique.**
 
+**NOTE**: If the number of worker nodes is >10, then add the following statements to the environment file/string to avoid network contention between worker nodes.
+
+.. code:: python
+
+    import os
+    import time
+    import random
+    random_obj = random.Random(f"{os.getpid()}_{time.time()}")
+    time.sleep(random_obj.random() * 15)  # use 5 if less clients are connected and chunk size is small
+
+
 Step 5 - Submit jobs
 ====================
 
