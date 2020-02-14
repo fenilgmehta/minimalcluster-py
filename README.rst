@@ -33,9 +33,21 @@ Usage & Examples
 Step 1 - Install this package
 =============================
 
+From python package repository
+
 .. code-block:: bash
 
    pip install minimalcluster
+
+Alternative: manually build and install:
+
+.. code-block:: bash
+
+    # Go to the directory where this repository has been cloned and run the following commands.
+    cd minimalcluster-py
+    python3 setup.py sdist bdist_wheel
+    python3 -m pip install --upgrade dist/minimalcluster*whl
+    rm -r build dist minimalcluster.egg-info  # remove the extra files created
 
 Step 2 - Start master node
 =============================

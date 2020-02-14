@@ -34,8 +34,18 @@ For more frameworks for parallel or cluster computing, you may also want to refe
 
 #### Step 1 - Install this package
 
-```
+From python package repository
+```shell script
 pip install minimalcluster
+```
+
+Alternative: manually build and install:
+```shell script
+# Go to the directory where this repository has been cloned and run the following commands.
+cd minimalcluster-py
+python3 setup.py sdist bdist_wheel
+python3 -m pip install --upgrade dist/minimalcluster*whl
+rm -r build dist minimalcluster.egg-info  # remove the extra files created
 ```
 
 #### Step 2 - Start master node
