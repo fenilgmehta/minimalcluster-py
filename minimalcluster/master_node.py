@@ -245,6 +245,15 @@ class MasterNode:
             self.envir_statements = source
 
     def register_target_function(self, fun_name):
+        """
+        Register the function to be executed for each task/job
+
+        Args:
+            fun_name (str): function/method name to be registered
+
+        Returns:
+            None
+        """
         self.target_fun = fun_name
 
     def load_args(self, args):
