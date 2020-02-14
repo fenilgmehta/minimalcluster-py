@@ -60,24 +60,25 @@ def clear_queue(q):
         q.get()
 
 
-def start_worker_in_background(HOST, PORT, AUTHKEY, nprocs, quiet):
+def start_worker_in_background(HOST, PORT, AUTHKEY, nprocs, debug_level, limit_nprocs_to_cpucores):
     from minimalcluster import WorkerNode
-    worker = WorkerNode(HOST, PORT, AUTHKEY, nprocs, quiet)
+    worker = WorkerNode(HOST, PORT, AUTHKEY, nprocs, debug_level, limit_nprocs_to_cpucores)
     worker.join_cluster()
 
 
 class MasterNode:
 
-    def __init__(self, HOST='127.0.0.1', PORT=8888, AUTHKEY=None, chunksize=50):
+    def __init__(self, HOST='127.0.0.1', PORT=8888, AUTHKEY=None, chunk_size=50, debug_level=2):
         """
         Method to initiate a master node object.
 
-        HOST: the hostname or IP address to use
-        PORT: the port to use
-        AUTHKEY: The process's authentication key (a string or byte string).
-                 If None is given, a random string will be given
-        chunksize: The numbers are split into chunks. Each chunk is pushed into the job queue.
-                   Here the size of each chunk if specified.
+        Args:
+            HOST (str): the hostname or IP address to use
+            PORT (int): the port to use
+            AUTHKEY (str): The process's authentication key (a string or byte string).
+                     If None is given, a random string will be given
+            chunk_size (int): The numbers are split into chunks. Each chunk is pushed into the job queue.
+                       Here the size of each chunk if specified.
         """
 
         # Check & process AUTHKEY
@@ -90,7 +91,7 @@ class MasterNode:
         self.HOST = HOST
         self.PORT = PORT
         self.AUTHKEY = AUTHKEY if AUTHKEY is not None else ''.join(random.choice(string.ascii_uppercase) for _ in range(6)).encode()
-        self.chunksize = chunksize
+        self.chunk_size = chunk_size
         self.server_status = 'off'
         self.as_worker = False
         self.target_fun = None
@@ -101,14 +102,18 @@ class MasterNode:
         self.args_to_share_to_workers = None
         self.envir_statements = None
 
-    def join_as_worker(self):
+        global DEBUG_LOG
+        DEBUG_LOG = debug_level
+        self.debug_level = debug_level
+
+    def join_as_worker(self, nprocs=cpu_count(), debug_level=2, limit_nprocs_to_cpucores=True):
         """
         This method helps start the master node as a worker node as well
         """
         if self.as_worker:
             print("[WARNING] This node has already joined the cluster as a worker node.")
         else:
-            self.process_as_worker = Process(target=start_worker_in_background, args=(self.HOST, self.PORT, self.AUTHKEY, cpu_count(), True,))
+            self.process_as_worker = Process(target=start_worker_in_background, args=(self.HOST, self.PORT, self.AUTHKEY, nprocs, debug_level, limit_nprocs_to_cpucores))
             self.process_as_worker.start()
 
             # waiting for the master node joining the cluster as a worker
@@ -124,7 +129,7 @@ class MasterNode:
         Method to create a manager as the master node.
 
         Arguments:
-        if_join_as_worker: Boolen.
+        if_join_as_worker: Boolean.
                         If True, the master node will also join the cluster as worker node. It will automatically run in background.
                         If False, users need to explicitly configure if they want the master node to work as worker node too.
                         The default value is True.
@@ -169,11 +174,18 @@ class MasterNode:
 
     def stop_as_worker(self):
         """
-        Given the master node can also join the cluster as a worker, we also need to have a method to stop it as a worker node (which may be necessary in some cases).
-        This method serves this purpose.
+        Given the master node can also join the cluster as a worker, we
+        also need to have a method to stop it as a worker node (which may
+        be necessary in some cases). This method serves this purpose.
 
         Given the worker node will start a separate process for heartbeat purpose.
         We need to shutdown the heartbeat process separately.
+
+        Args:
+            -
+
+        Returns:
+            None
         """
         try:
             os.kill(self.pid_as_worker_on_master, signal.SIGTERM)
@@ -219,7 +231,14 @@ class MasterNode:
 
     def load_args(self, args):
         """
-        args should be a list
+        List/Tuple of arguments which are to be given to the
+        registered function for execution.
+
+        Args:
+            args (list or tuple): arguments to be used for execution
+
+        Returns:
+            None
         """
         self.args_to_share_to_workers = args
 
